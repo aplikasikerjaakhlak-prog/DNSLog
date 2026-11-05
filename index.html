@@ -125,6 +125,7 @@
   window.addEventListener('message', e => {
     const ok = /(\.googleusercontent\.com|script\.google\.com)$/.test(new URL(e.origin).hostname);
     if (ok && e.data && e.data.type === 'dnslog-enable-push') openSheet();
+    if (ok && e.data && e.data.type === 'dnslog-reload') location.reload();   // versi baru dashboard → muat ulang semuanya
     // kunci perangkat admin → disimpan untuk service worker (tombol angka di notifikasi)
     if (ok && e.data && e.data.type === 'dnslog-device-key' && e.data.dk && 'caches' in window)
       caches.open('dnslog-keys').then(c => c.put('./device-key', new Response(JSON.stringify({ dk: e.data.dk, exec: C.EXEC_URL }),
