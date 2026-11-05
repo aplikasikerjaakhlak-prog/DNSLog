@@ -13,12 +13,11 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Log DNS">
 <style>
-  :root { color-scheme: light; }
-  html, body { margin: 0; height: 100%; background: #f2f4f8; overflow: hidden; }
-  body { padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); background: #1f3a5f; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body { background: #1f3a5f; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   iframe { position: fixed; top: env(safe-area-inset-top); left: 0; width: 100%; height: calc(100% - env(safe-area-inset-top)); border: 0; background: #f2f4f8; opacity: 0; transition: opacity .4s; }
   iframe.ready { opacity: 1; }
-  .boot { position: fixed; inset: 0; display: grid; place-items: center; background: #f2f4f8; font: 600 13px system-ui, sans-serif; color: #6a7386; text-align: center; }
+  .boot { position: fixed; inset: 0; display: grid; place-items: center; background: #f2f4f8; font: 600 13px system-ui, sans-serif; color: #6a7386; text-align: center; z-index: 2; }
   .boot img { width: 72px; height: 72px; border-radius: 18px; margin-bottom: 14px; box-shadow: 0 8px 24px rgba(31,58,95,.25); }
   .dots { display: flex; gap: 7px; justify-content: center; margin: 4px 0 10px; height: 24px; align-items: flex-end; }
   .dots i { width: 11px; height: 11px; border-radius: 50%; background: #1f5fbf; animation: j .9s infinite cubic-bezier(.45,0,.55,1); }
@@ -26,26 +25,107 @@
   .dots i:nth-child(3) { animation-delay: .3s; background: #60a5fa; }
   @keyframes j { 0%,60%,100% { transform: translateY(0) } 30% { transform: translateY(-13px) } }
   .off { display: none; color: #c42f2f; margin-top: 8px; }
-  .off button { margin-top: 10px; border: 0; background: #1f5fbf; color: #fff; padding: 10px 18px; border-radius: 10px; font: 600 14px system-ui; }
+  .btn { border: 0; background: #1f5fbf; color: #fff; padding: 12px 18px; border-radius: 12px; font: 600 15px system-ui; cursor: pointer; }
+  .btn.ghost { background: transparent; color: #1f5fbf; }
+  /* lembar izin notifikasi (harus diketuk di halaman ini, bukan di iframe) */
+  .sheet { position: fixed; inset: 0; background: rgba(15,23,42,.5); display: none; align-items: flex-end; justify-content: center; z-index: 5; }
+  .sheet.on { display: flex; }
+  .sheet > div { background: #fff; width: min(440px, 100%); border-radius: 20px 20px 0 0; padding: 22px 20px calc(18px + env(safe-area-inset-bottom)); text-align: center; color: #1c2333; }
+  .sheet h3 { margin: 6px 0; font-size: 18px; }
+  .sheet p { color: #6a7386; font-size: 14px; line-height: 1.5; margin: 0 0 16px; }
+  .sheet .btn { width: 100%; margin-bottom: 6px; }
+  .sheet .msg { font-size: 13px; min-height: 18px; margin-bottom: 8px; }
 </style>
+<script src="config.js"></script>
 </head>
 <body>
   <div class="boot" id="boot"><div>
     <img src="icon-192.png" alt="">
     <div class="dots"><i></i><i></i><i></i></div>Membuka Log Aktivitas DNS…
-    <div class="off" id="off">Tidak ada koneksi internet.<br><button onclick="location.reload()">Coba lagi</button></div>
+    <div class="off" id="off">Tidak ada koneksi internet.<br><br><button class="btn" onclick="location.reload()">Coba lagi</button></div>
   </div></div>
 
-  <!-- GANTI src dengan URL web app Apps Script (berakhiran /exec) -->
-  <iframe id="app"
-    src="https://script.google.com/macros/s/AKfycbyhYWd4U9QssL9OhmXzPCRe3k-YtaOrMaI2hmX_iKRsVU129ozrPqTSuTZmuNlwOuau/exec"
-    allow="clipboard-read; clipboard-write; camera"
-    onload="this.classList.add('ready'); document.getElementById('boot').style.display='none';"></iframe>
+  <iframe id="app" allow="clipboard-read; clipboard-write; camera"></iframe>
 
+  <div class="sheet" id="sheet"><div>
+    <div style="font-size:38px">🔔</div>
+    <h3>Aktifkan notifikasi login</h3>
+    <p>HP ini akan menerima notifikasi setiap ada Viewer/Operator yang minta persetujuan login, walaupun aplikasi tertutup.</p>
+    <div class="msg" id="sheetMsg"></div>
+    <button class="btn" id="allowBtn">Izinkan notifikasi</button>
+    <button class="btn ghost" onclick="closeSheet()">Nanti saja</button>
+  </div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
+  const C = window.DNSLOG || {};
+  const app = document.getElementById('app');
+  const ls = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+               set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
+  const swReady = 'serviceWorker' in navigator ? navigator.serviceWorker.register('sw.js').then(() => navigator.serviceWorker.ready) : Promise.reject('no-sw');
+
+  /** buka web app di iframe; pt = token FCM perangkat ini, approve = id permintaan dari notifikasi */
+  function loadApp(approve) {
+    const q = new URLSearchParams({ pwa: '1' });
+    const pt = ls.get('dnslog_pt'); if (pt) q.set('pt', pt);
+    if (approve) q.set('approve', approve);
+    app.classList.remove('ready');
+    app.src = C.EXEC_URL + '?' + q.toString();
+  }
+  app.addEventListener('load', () => { app.classList.add('ready'); document.getElementById('boot').style.display = 'none'; });
+
+  /* ---------- Firebase Cloud Messaging ---------- */
+  let messaging = null;
+  function fcmReady() {
+    if (messaging) return messaging;
+    if (!window.firebase || !C.FIREBASE || /GANTI/.test(C.FIREBASE.apiKey) || /GANTI/.test(C.VAPID_KEY)) return null;
+    try { firebase.initializeApp(C.FIREBASE); messaging = firebase.messaging(); } catch (e) { messaging = null; }
+    return messaging;
+  }
+  async function getFcmToken() {
+    const m = fcmReady(); if (!m) throw new Error('Firebase belum dikonfigurasi di config.js');
+    const reg = await swReady;
+    const t = await m.getToken({ vapidKey: C.VAPID_KEY, serviceWorkerRegistration: reg });
+    if (!t) throw new Error('Token notifikasi kosong');
+    return t;
+  }
+  function openSheet() { document.getElementById('sheetMsg').textContent = ''; document.getElementById('sheet').classList.add('on'); }
+  function closeSheet() { document.getElementById('sheet').classList.remove('on'); }
+  document.getElementById('allowBtn').onclick = async () => {
+    const msg = document.getElementById('sheetMsg');
+    try {
+      if (!('Notification' in window)) throw new Error('Browser ini tidak mendukung notifikasi. Di iPhone, buka dari ikon di Layar Utama (iOS 16.4+).');
+      msg.textContent = 'Meminta izin…';
+      const p = await Notification.requestPermission();
+      if (p !== 'granted') throw new Error('Izin notifikasi ditolak. Aktifkan lewat pengaturan situs / aplikasi.');
+      msg.textContent = 'Mendaftarkan perangkat…';
+      const t = await getFcmToken();
+      ls.set('dnslog_pt', t);
+      closeSheet();
+      loadApp();                       // web app menerima token (pt) lalu mendaftarkannya untuk akun admin
+    } catch (e) { msg.style.color = '#c42f2f'; msg.textContent = e.message || String(e); }
+  };
+
+  // pesan dari web app (iframe Apps Script) & dari service worker
+  window.addEventListener('message', e => {
+    const ok = /(\.googleusercontent\.com|script\.google\.com)$/.test(new URL(e.origin).hostname);
+    if (ok && e.data && e.data.type === 'dnslog-enable-push') openSheet();
+  });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data && e.data.type === 'approve') loadApp(e.data.id);
+  });
+
+  // perbarui token diam-diam bila izin sudah diberikan (token FCM bisa berganti)
+  swReady.then(async () => {
+    if ('Notification' in window && Notification.permission === 'granted' && fcmReady()) {
+      try { const t = await getFcmToken(); if (t !== ls.get('dnslog_pt')) { ls.set('dnslog_pt', t); loadApp(new URLSearchParams(location.search).get('approve')); } } catch (e) {}
+    }
+  }).catch(() => {});
+
   if (!navigator.onLine) document.getElementById('off').style.display = 'block';
   addEventListener('online', () => location.reload());
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  loadApp(new URLSearchParams(location.search).get('approve'));   // dari ketukan notifikasi: ?approve=ID
 </script>
 </body>
 </html>
