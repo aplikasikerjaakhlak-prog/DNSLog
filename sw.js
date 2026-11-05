@@ -1,7 +1,9 @@
 // Service worker: install aplikasi, cadangan offline, dan notifikasi persetujuan login (FCM).
-const CACHE = 'dnslog-v4';
+const CACHE = 'dnslog-v6';
 const SHELL = ['./', './index.html', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
+// halaman meminta versi baru langsung aktif (tanpa menunggu aplikasi ditutup)
+self.addEventListener('message', e => { if (e.data && e.data.type === 'skip-waiting') self.skipWaiting(); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== 'dnslog-keys').map(k => caches.delete(k)))));
   self.clients.claim();
