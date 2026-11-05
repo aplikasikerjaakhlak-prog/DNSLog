@@ -15,9 +15,9 @@
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; }
   body { background: #1f3a5f; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  iframe { position: fixed; top: env(safe-area-inset-top); left: 0; width: 100%; height: calc(100% - env(safe-area-inset-top)); border: 0; background: #f2f4f8; opacity: 0; transition: opacity .4s; }
+  iframe { position: fixed; top: env(safe-area-inset-top); left: 0; width: 100%; height: calc(100% - env(safe-area-inset-top)); border: 0; background: #0e2448; opacity: 0; transition: opacity .4s; }
   iframe.ready { opacity: 1; }
-  .boot { position: fixed; inset: 0; display: grid; place-items: center; background: #f2f4f8; font: 600 13px system-ui, sans-serif; color: #6a7386; text-align: center; z-index: 2; }
+  .boot { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(900px 600px at 75% 0%, #1f4f93 0%, transparent 60%), linear-gradient(160deg, #0a1830, #0e2448 55%, #091428); font: 600 13px system-ui, sans-serif; color: #cfe2ff; text-align: center; z-index: 2; }
   .boot img { width: 72px; height: 72px; border-radius: 18px; margin-bottom: 14px; box-shadow: 0 8px 24px rgba(31,58,95,.25); }
   .dots { display: flex; gap: 7px; justify-content: center; margin: 4px 0 10px; height: 24px; align-items: flex-end; }
   .dots i { width: 11px; height: 11px; border-radius: 50%; background: #1f5fbf; animation: j .9s infinite cubic-bezier(.45,0,.55,1); }
@@ -63,7 +63,21 @@
   const app = document.getElementById('app');
   const ls = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
                set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
-  const swReady = 'serviceWorker' in navigator ? navigator.serviceWorker.register('sw.js').then(() => navigator.serviceWorker.ready) : Promise.reject('no-sw');
+  const swReady = 'serviceWorker' in navigator ? navigator.serviceWorker.register('sw.js').then(reg => {
+    // pembaruan otomatis: versi baru langsung dipakai, lalu halaman dimuat ulang sekali
+    const promote = w => w && w.postMessage({ type: 'skip-waiting' });
+    promote(reg.waiting);
+    reg.addEventListener('updatefound', () => {
+      const w = reg.installing;
+      w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) promote(w); });
+    });
+    reg.update().catch(() => {});
+    return navigator.serviceWorker.ready;
+  }) : Promise.reject('no-sw');
+  if ('serviceWorker' in navigator) {
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (!reloaded) { reloaded = true; location.reload(); } });
+  }
 
   /** buka web app di iframe; pt = token FCM perangkat ini, approve = id permintaan dari notifikasi */
   function loadApp(approve) {
