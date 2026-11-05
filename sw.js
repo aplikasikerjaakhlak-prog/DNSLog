@@ -1,14 +1,14 @@
 // Service worker: install aplikasi, cadangan offline, dan notifikasi persetujuan login (FCM).
-const CACHE = 'dnslog-v2';
+const CACHE = 'dnslog-v3';
 const SHELL = ['./', './index.html', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== 'dnslog-keys').map(k => caches.delete(k)))));
   self.clients.claim();
 });
 self.addEventListener('fetch', e => {
   const u = new URL(e.request.url);
-  if (e.request.method !== 'GET' || u.origin !== location.origin) return;
+  if (e.request.method !== 'GET' || u.origin !== location.origin || u.pathname.endsWith('/device-key')) return;
   e.respondWith(fetch(e.request).then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put(e.request, c)); return r; })
     .catch(() => caches.match(e.request).then(r => r || caches.match('./index.html'))));
 });
@@ -21,10 +21,12 @@ self.addEventListener('push', e => {
   const d = p.data || p;
   let title, opt;
   if (d.type === 'login') {
-    title = '🔐 Permintaan login';
-    opt = { body: `${d.nama} (${d.username}) · ${ROLE[d.role] || d.role}\n${d.dev}\nKetuk untuk memilih angka`,
+    title = '🔐 Permintaan login · pilih angka di layar user';
+    opt = { body: `${d.nama} (${d.username}) · ${ROLE[d.role] || d.role}\n${d.dev}\nKetuk notifikasi untuk menolak / pilihan lain`,
             tag: 'login-' + d.id, renotify: true, requireInteraction: true, vibrate: [200, 100, 200, 100, 200],
-            data: { id: d.id } };
+            data: { id: d.id, user: d.username } };
+    // tombol angka langsung di notifikasi (Android/Chrome maks. 2 tombol)
+    if (d.a1 && d.a2) opt.actions = [{ action: 'p' + d.a1, title: '   ' + d.a1 + '   ' }, { action: 'p' + d.a2, title: '   ' + d.a2 + '   ' }];
   } else {
     title = d.title || 'Log Aktivitas DNS';
     opt = { body: d.body || '', tag: 'info', data: {} };
@@ -32,14 +34,36 @@ self.addEventListener('push', e => {
   opt.icon = 'icon-192.png'; opt.badge = 'icon-192.png'; opt.timestamp = Date.now();
   e.waitUntil(self.registration.showNotification(title, opt));
 });
-self.addEventListener('notificationclick', e => {
-  e.notification.close();
-  const id = (e.notification.data || {}).id || '';
+
+function openApp(id) {
   const url = new URL(id ? './?approve=' + encodeURIComponent(id) : './', self.registration.scope).href;
-  e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+  return clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
     for (const c of list) {
       if (c.url.startsWith(self.registration.scope)) { if (id) c.postMessage({ type: 'approve', id }); return c.focus(); }
     }
     return clients.openWindow(url);
-  }));
+  });
+}
+
+/** kirim pilihan angka langsung ke server tanpa membuka aplikasi */
+async function approveFromNotif(id, pick, user) {
+  const r = await caches.open('dnslog-keys').then(c => c.match('./device-key'));
+  if (!r) return openApp(id);                                  // belum ada kunci → buka aplikasi
+  const { dk, exec } = await r.json();
+  let res = null;
+  try {
+    const x = await fetch(exec, { method: 'POST', redirect: 'follow', body: JSON.stringify({ type: 'push-approve', id, pick, dk }) });
+    res = await x.json();
+  } catch (_) {}
+  if (!res) return openApp(id);                                // jaringan / respons tidak terbaca → buka aplikasi
+  return self.registration.showNotification(res.ok ? '✅ Login diizinkan' : '⛔ Login tidak diizinkan', {
+    body: res.msg || (res.ok ? `${user} sudah masuk` : 'Permintaan ditolak'), tag: 'login-' + id, icon: 'icon-192.png',
+    badge: 'icon-192.png', timestamp: Date.now(), data: {} });
+}
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const d = e.notification.data || {};
+  if (e.action && e.action.startsWith('p') && d.id) e.waitUntil(approveFromNotif(d.id, e.action.slice(1), d.user));
+  else e.waitUntil(openApp(d.id || ''));
 });
