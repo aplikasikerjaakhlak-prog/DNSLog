@@ -1,5 +1,5 @@
 // Service worker: install aplikasi, cadangan offline, dan notifikasi persetujuan login (FCM).
-const CACHE = 'dnslog-v3';
+const CACHE = 'dnslog-v4';
 const SHELL = ['./', './index.html', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener('activate', e => {
@@ -47,18 +47,26 @@ function openApp(id) {
 
 /** kirim pilihan angka langsung ke server tanpa membuka aplikasi */
 async function approveFromNotif(id, pick, user) {
-  const r = await caches.open('dnslog-keys').then(c => c.match('./device-key'));
-  if (!r) return openApp(id);                                  // belum ada kunci → buka aplikasi
-  const { dk, exec } = await r.json();
-  let res = null;
-  try {
-    const x = await fetch(exec, { method: 'POST', redirect: 'follow', body: JSON.stringify({ type: 'push-approve', id, pick, dk }) });
-    res = await x.json();
-  } catch (_) {}
-  if (!res) return openApp(id);                                // jaringan / respons tidak terbaca → buka aplikasi
-  return self.registration.showNotification(res.ok ? '✅ Login diizinkan' : '⛔ Login tidak diizinkan', {
-    body: res.msg || (res.ok ? `${user} sudah masuk` : 'Permintaan ditolak'), tag: 'login-' + id, icon: 'icon-192.png',
+  const note = (title, body) => self.registration.showNotification(title, { body, tag: 'login-' + id, icon: 'icon-192.png',
     badge: 'icon-192.png', timestamp: Date.now(), data: {} });
+  const r = await caches.open('dnslog-keys').then(c => c.match('./device-key')).catch(() => null);
+  if (!r) {                                                    // kunci perangkat belum ada
+    await note('⚠️ Tombol angka belum aktif', 'Buka aplikasi Log DNS sekali (login admin) agar tombol angka di notifikasi bisa dipakai.');
+    return openApp(id);
+  }
+  const { dk, exec } = await r.json();
+  const body = JSON.stringify({ type: 'push-approve', id, pick, dk });
+  try {                                                        // 1) normal: baca hasil dari server
+    const x = await fetch(exec, { method: 'POST', redirect: 'follow', body });
+    const res = await x.json();
+    return note(res.ok ? '✅ Login diizinkan' : '⛔ Login tidak diizinkan', res.msg || '');
+  } catch (_) {}
+  try {                                                        // 2) cadangan: kirim tanpa membaca balasan
+    await fetch(exec, { method: 'POST', mode: 'no-cors', body });
+    return note('📨 Pilihan ' + pick + ' terkirim', 'Cek layar ' + (user || 'user') + ' — bila angkanya sama, user langsung masuk.');
+  } catch (_) {}
+  await note('⚠️ Gagal mengirim', 'Tidak ada koneksi. Membuka aplikasi…');
+  return openApp(id);
 }
 
 self.addEventListener('notificationclick', e => {
