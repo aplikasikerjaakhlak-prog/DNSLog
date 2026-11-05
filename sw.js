@@ -1,5 +1,5 @@
 // Service worker: install aplikasi, cadangan offline, dan notifikasi persetujuan login (FCM).
-const CACHE = 'dnslog-v6';
+const CACHE = 'dnslog-v7';
 const SHELL = ['./', './index.html', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
 // halaman meminta versi baru langsung aktif (tanpa menunggu aplikasi ditutup)
@@ -23,9 +23,11 @@ self.addEventListener('push', e => {
   const d = p.data || p;
   let title, opt;
   if (d.type === 'login') {
-    title = '🔐 Permintaan login · pilih angka di layar user';
-    opt = { body: `${d.nama} (${d.username}) · ${ROLE[d.role] || d.role}\n${d.dev}\nKetuk notifikasi untuk menolak / pilihan lain`,
-            tag: 'login-' + d.id, renotify: true, requireInteraction: true, vibrate: [200, 100, 200, 100, 200],
+    // judul singkat agar langsung terbaca di banner atas (heads-up) tanpa perlu membuka notifikasi
+    title = `🔐 ${d.nama || d.username} minta login — pilih angka`;
+    opt = { body: `${ROLE[d.role] || d.role} · ${d.dev}\nCocokkan dengan angka di layar user. Ketuk untuk menolak / pilihan lain.`,
+            tag: 'login-' + d.id, renotify: true, requireInteraction: true, silent: false,
+            vibrate: [400, 150, 400, 150, 400, 150, 400],
             data: { id: d.id, user: d.username } };
     // tombol angka langsung di notifikasi (Android/Chrome maks. 2 tombol)
     if (d.a1 && d.a2) opt.actions = [{ action: 'p' + d.a1, title: '   ' + d.a1 + '   ' }, { action: 'p' + d.a2, title: '   ' + d.a2 + '   ' }];
